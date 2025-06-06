@@ -855,10 +855,8 @@ class CalendarManager {
                 dayElement.classList.add('calendar__day--past');
             } else if (agendamentosNaData.length > 0) {
                 dayElement.classList.add('calendar__day--booked');
-                dayElement.title = `${agendamentosNaData.length} agendamento(s):\n${agendamentosNaData.map(ag => `${ag.horario} - ${ag.cliente}`).join('\n')}`;
             } else {
                 dayElement.classList.add('calendar__day--available');
-                dayElement.title = 'Disponível para agendamento';
             }
             
             // Destaca o dia atual
@@ -868,8 +866,9 @@ class CalendarManager {
                 dayElement.style.color = 'var(--color-primary)';
             }
             
-            // Click handler para dias disponíveis
-            if (!isPast && currentDate.getMonth() === appState.currentMonth) {
+            // Click handler para todos os dias dentro do mês atual
+            // para que até dias sem agendamento possam abrir o modal informativo
+            if (currentDate.getMonth() === appState.currentMonth) {
                 dayElement.style.cursor = 'pointer';
                 dayElement.addEventListener('click', () => {
                     this.handleDayClick(dateString);
@@ -881,27 +880,82 @@ class CalendarManager {
     }
     
     handleDayClick(dateString) {
-        // Vai para página de agendamento com data preenchida
-        if (window.navigationManager) {
-            navigationManager.showPage('agendamento');
-            
-            setTimeout(() => {
-                const dataInput = document.getElementById('data');
-                if (dataInput) {
-                    dataInput.value = dateString;
-                    // Força a validação e atualização dos horários após definir a data
-                    if (window.formManager) {
-                        formManager.validateField(dataInput); // Opcional: valida imediatamente a data
-                        formManager.updateHorarios();
-                    }
-                    
-                    // Foca no próximo campo
-                    const horarioSelect = document.getElementById('horario');
-                    if (horarioSelect) {
-                        horarioSelect.focus();
-                    }
+        const agendamentosNaData = appState.getAgendamentosByDate(dateString);
+        const dateObj = new Date(dateString + 'T00:00:00'); // Cria um objeto Date para formatação
+        const formattedDateFull = dateObj.toLocaleDateString('pt-BR', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+        });
+        const formattedDateShort = dateObj.toLocaleDateString('pt-BR', {
+            day: '2-digit', month: '2-digit', year: 'numeric'
+        });
+
+        let title = '';
+        let message = '';
+
+        if (agendamentosNaData.length > 0) {
+            title = `Agendamentos em ${formattedDateShort}`;
+            message = `**Temos ${agendamentosNaData.length} agendamento(s) para ${formattedDateFull}:**\n\n`; // Título negrito e contagem
+
+            agendamentosNaData.sort((a, b) => a.horario.localeCompare(b.horario)); // Ordena por hora
+            agendamentosNaData.forEach(ag => {
+                message += `Horário: ${ag.horario}h\n`;
+                message += `Nome completo: ${ag.cliente}\n`;
+                message += `Serviço: ${ag.servico}\n`;
+                if (ag.observacoes) {
+                    message += `Observações: ${ag.observacoes}\n`;
                 }
-            }, 100);
+                message += '\n'; // Adiciona uma linha em branco entre agendamentos
+            });
+        } else {
+            title = `Nenhum agendamento em ${formattedDateShort}`;
+            message = `Nenhum agendamento para ${formattedDateFull}.`;
+        }
+
+        if (window.modalManager) {
+            modalManager.show(
+                title,
+                message,
+                null, // Não há ação de confirmação padrão para este modal informativo
+                { confirmText: 'Fechar', cancelText: 'Agendar', type: 'info' } // Customiza botões
+            );
+
+            // Re-adiciona os event listeners para garantir que funcionem corretamente
+            // e evitem múltiplos listeners no mesmo botão.
+            const modalCancelButton = document.getElementById('modal-cancel');
+            if (modalCancelButton) {
+                const newCancelButton = modalCancelButton.cloneNode(true);
+                modalCancelButton.parentNode.replaceChild(newCancelButton, modalCancelButton);
+                newCancelButton.addEventListener('click', () => {
+                    if (window.navigationManager) {
+                        navigationManager.showPage('agendamento');
+                        setTimeout(() => {
+                            const dataInput = document.getElementById('data');
+                            if (dataInput) {
+                                dataInput.value = dateString;
+                                if (window.formManager) {
+                                    formManager.updateHorarios();
+                                }
+                                const horarioSelect = document.getElementById('horario');
+                                if (horarioSelect) {
+                                    horarioSelect.focus();
+                                }
+                            }
+                        }, 100);
+                    }
+                    modalManager.hide();
+                });
+            }
+
+            const modalConfirmButton = document.getElementById('modal-confirm');
+            if (modalConfirmButton) {
+                const newConfirmButton = modalConfirmButton.cloneNode(true);
+                modalConfirmButton.parentNode.replaceChild(newConfirmButton, modalConfirmButton);
+                newConfirmButton.textContent = 'Fechar';
+                newConfirmButton.className = 'btn btn--primary';
+                newConfirmButton.addEventListener('click', () => {
+                    modalManager.hide();
+                });
+            }
         }
     }
     
@@ -1240,15 +1294,44 @@ class ModalManager {
         
         const titleEl = document.getElementById('modal-title');
         const messageEl = document.getElementById('modal-message');
-        const confirmBtn = document.getElementById('modal-confirm');
-        const cancelBtn = document.getElementById('modal-cancel');
+        let confirmBtn = document.getElementById('modal-confirm'); // Use let
+        let cancelBtn = document.getElementById('modal-cancel');   // Use let
         
         if (titleEl) titleEl.textContent = title;
         if (messageEl) {
-            messageEl.style.whiteSpace = 'pre-wrap';
-            messageEl.textContent = message;
+            messageEl.style.whiteSpace = 'pre-wrap'; // Mantém para quebras de linha
+            // Substitui **texto** por <strong>texto</strong> para negrito
+            // Esta é uma substituição simples, não um parser de markdown completo.
+            const formattedMessage = message.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            messageEl.innerHTML = formattedMessage; // Usa innerHTML para renderizar a tag <strong>
         }
         
+        // Clonar e substituir botões para remover listeners antigos
+        if (confirmBtn) {
+            const newConfirmBtn = confirmBtn.cloneNode(true);
+            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+            confirmBtn = newConfirmBtn; // Atualiza a referência
+        } else {
+            // Se o botão não existir, cria um (improvável com o HTML fornecido)
+            confirmBtn = document.createElement('button');
+            confirmBtn.id = 'modal-confirm';
+            confirmBtn.classList.add('btn');
+            document.querySelector('.modal__footer').appendChild(confirmBtn);
+        }
+
+        if (cancelBtn) {
+            const newCancelBtn = cancelBtn.cloneNode(true);
+            cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+            cancelBtn = newCancelBtn; // Atualiza a referência
+        } else {
+            // Se o botão não existir, cria um
+            cancelBtn = document.createElement('button');
+            cancelBtn.id = 'modal-cancel';
+            cancelBtn.classList.add('btn', 'btn--outline');
+            document.querySelector('.modal__footer').insertBefore(cancelBtn, confirmBtn);
+        }
+
+        // Configura textos e classes dos botões
         if (confirmBtn) {
             confirmBtn.textContent = confirmText;
             confirmBtn.className = `btn ${type === 'danger' ? 'btn--outline' : 'btn--primary'}`;
@@ -1264,15 +1347,24 @@ class ModalManager {
         
         // Handle confirm action
         if (onConfirm && confirmBtn) {
-            const newConfirmBtn = confirmBtn.cloneNode(true);
-            confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
-            
-            newConfirmBtn.addEventListener('click', () => {
+            confirmBtn.addEventListener('click', () => {
                 onConfirm();
+                this.hide();
+            });
+        } else if (confirmBtn) {
+            // Se não houver onConfirm, o botão 'Confirmar' apenas fecha o modal
+            confirmBtn.addEventListener('click', () => {
                 this.hide();
             });
         }
         
+        // Por padrão, o botão de cancelar apenas fecha o modal, a menos que seja reatribuído externamente.
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.hide();
+            });
+        }
+
         this.modal.classList.add('modal--active');
         this.isOpen = true;
         document.body.style.overflow = 'hidden';
