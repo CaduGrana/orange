@@ -299,7 +299,9 @@ class NavigationManager {
                     // Pequeno delay para garantir que o DOM está pronto
                     setTimeout(() => {
                         formManager.setupDateInput();
-                        formManager.updateHorarios();
+                        // A atualização de horários só deve acontecer se a data for válida
+                        // e será disparada pelo evento 'change' ou 'input' da data.
+                        // formManager.updateHorarios();
                     }, 100);
                 }
                 break;
@@ -321,7 +323,7 @@ class FormManager {
         this.bindEvents();
         this.populateSelects();
         this.setupValidation();
-        this.setupDateInput();
+        this.setupDateInput(); // Chama este método para configurar o input de data
     }
     
     setupDateInput() {
@@ -331,22 +333,15 @@ class FormManager {
             const hoje = new Date();
             const hojeStr = hoje.toISOString().split('T')[0];
             dataInput.min = hojeStr;
-            
-            // Define data padrão como amanhã se não houver valor
-            if (!dataInput.value) {
-                const amanha = new Date(hoje);
-                amanha.setDate(hoje.getDate() + 1);
-                const amanhaStr = amanha.toISOString().split('T')[0];
-                dataInput.value = amanhaStr;
-            }
-            
-            // Força a atualização dos horários
-            this.updateHorarios();
+
+            // Define explicitamente o valor do input de data como vazio
+            // Para que o campo inicie sem uma data pré-selecionada.
+            dataInput.value = ''; 
             
             // Debug
             console.log('Date input configurado:', {
                 min: dataInput.min,
-                value: dataInput.value,
+                value: dataInput.value, // Agora deve ser vazio
                 today: hojeStr
             });
         }
@@ -487,9 +482,9 @@ class FormManager {
                     isValid = false;
                     message = 'Data é obrigatória';
                 } else {
-                    const selectedDate = new Date(value);
+                    const selectedDate = new Date(value + 'T00:00:00'); // Trata como início do dia
                     const today = new Date();
-                    today.setHours(0, 0, 0, 0);
+                    today.setHours(0, 0, 0, 0); // Zera horas para comparação de data
                     
                     if (selectedDate < today) {
                         isValid = false;
@@ -569,26 +564,38 @@ class FormManager {
             return;
         }
         
-        const selectedDate = dataInput.value;
-        console.log('Atualizando horários para data:', selectedDate);
+        const selectedDateString = dataInput.value;
+        console.log('Atualizando horários para data:', selectedDateString);
         
         // Limpa opções existentes
         horarioSelect.innerHTML = '<option value="">Selecione o horário</option>';
         
-        if (!selectedDate) {
+        if (!selectedDateString) {
             console.log('Nenhuma data selecionada');
             return;
         }
         
-        const agendamentosNaData = appState.getAgendamentosByDate(selectedDate);
+        const agendamentosNaData = appState.getAgendamentosByDate(selectedDateString);
         const horariosOcupados = agendamentosNaData.map(ag => ag.horario);
         
         console.log('Agendamentos na data:', agendamentosNaData);
         console.log('Horários ocupados:', horariosOcupados);
         
-        const horariosDisponiveis = appState.horariosDisponiveis.filter(horario => 
-            !horariosOcupados.includes(horario)
-        );
+        const now = new Date();
+        const todayString = now.toISOString().split('T')[0];
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+
+        const horariosDisponiveis = appState.horariosDisponiveis.filter(horario => {
+            const [h, m] = horario.split(':').map(Number);
+            const isOccupied = horariosOcupados.includes(horario);
+
+            // Verifica se a data selecionada é hoje e se o horário já passou
+            const isPastHourToday = selectedDateString === todayString &&
+                                    (h < currentHour || (h === currentHour && m <= currentMinute));
+            
+            return !isOccupied && !isPastHourToday;
+        });
         
         console.log('Horários disponíveis:', horariosDisponiveis);
         
@@ -691,9 +698,9 @@ class FormManager {
             return false;
         }
         
-        const selectedDate = new Date(agendamento.data);
+        const selectedDate = new Date(agendamento.data + 'T00:00:00'); // Trata como início do dia
         const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0); // Zera horas para comparação de data
         
         if (selectedDate < today) {
             if (window.toastManager) {
@@ -882,7 +889,9 @@ class CalendarManager {
                 const dataInput = document.getElementById('data');
                 if (dataInput) {
                     dataInput.value = dateString;
+                    // Força a validação e atualização dos horários após definir a data
                     if (window.formManager) {
+                        formManager.validateField(dataInput); // Opcional: valida imediatamente a data
                         formManager.updateHorarios();
                     }
                     
